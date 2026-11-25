@@ -87,6 +87,7 @@ export const api = {
   shortcut: (id: string) => invoke<string>("create_engine_shortcut", { id }),
   reveal: (id: string) => invoke<void>("reveal_engine", { id }),
   openRelease: (tag: string) => invoke<void>("open_release_page", { tag }),
+  openChangelog: (tag: string, curated: boolean) => invoke<void>("open_changelog", { tag, curated }),
   pickEngine: () => open({
     title: "Select the Godot editor executable",
     multiple: false,

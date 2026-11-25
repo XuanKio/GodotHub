@@ -78,9 +78,17 @@ export function App() {
           {hub.notice.type === "error" ? <CircleAlert size={20} /> : <CheckCircle size={20} />}
           <div>
             <p>{hub.notice.message}</p>
-            {hub.notice.showDownloads && (
-              <button type="button" className="text-button" onClick={() => { setView("downloads"); hub.setNotice(null); }}>
-                View downloads <ArrowUpRight size={15} />
+            {hub.notice.action && (
+              <button type="button" className="text-button" onClick={() => {
+                if (hub.notice?.action === "updates") {
+                  setInstallsTab("updates");
+                  setView("installs");
+                } else {
+                  setView("downloads");
+                }
+                hub.setNotice(null);
+              }}>
+                {hub.notice.action === "updates" ? "View updates" : "View downloads"} <ArrowUpRight size={15} />
               </button>
             )}
           </div>

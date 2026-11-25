@@ -438,6 +438,16 @@ ul { margin: 0; padding: 0; list-style: none; }
 .information-notice > svg { color: var(--accent); }
 .error-notice { background: var(--danger-wash); color: var(--danger); border-color: transparent; }
 
+.update-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.update-toolbar > p { color: var(--muted); font-size: 13px; line-height: 1.5; }
+
 .modal {
   width: min(520px, calc(100vw - 42px));
   max-height: calc(100dvh - 44px);
@@ -468,6 +478,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .dialog-action-list > .button { justify-content: flex-start; padding-block: 8px; white-space: normal; text-align: left; }
 .release-details-heading { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; }
 .release-notes { margin-top: 7px; white-space: pre-wrap; }
+.changelog-links { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
 
 .download-group + .download-group, .settings-group + .settings-group { margin-top: 24px; }
 .section-title {

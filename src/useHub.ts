@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errorMessage, isActive } from "./api";
 import type { Architecture, Catalogue, InstalledEngine, Job, Settings, Stage } from "./api";
+import { findEngineUpdates, updateKey } from "./updates";
 
 type Resource<T> = { data: T; loading: boolean; error: string };
-type Notice = { message: string; type: "success" | "error"; showDownloads?: boolean };
+type Notice = { message: string; type: "success" | "error"; action?: "downloads" | "updates" };
+type CatalogueResult = Omit<Resource<Catalogue | null>, "loading">;
 
 const stageOrder: Record<Stage, number> = {
   queued: 0,
@@ -32,12 +34,15 @@ export function useHub() {
   const [settings, setSettings] = useState<Resource<Settings | null>>({ data: null, loading: true, error: "" });
   const [installed, setInstalled] = useState<Resource<InstalledEngine[]>>({ data: [], loading: true, error: "" });
   const [catalogue, setCatalogue] = useState<Resource<Catalogue | null>>({ data: null, loading: false, error: "" });
+  const [updateCheck, setUpdateCheck] = useState<Resource<Catalogue | null>>({ data: null, loading: false, error: "" });
   const [architecture, setArchitecture] = useState<Architecture | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
-  const catalogueRequest = useRef<Promise<void> | null>(null);
+  const catalogueRequest = useRef<{ force: boolean; promise: Promise<CatalogueResult> } | null>(null);
+  const checkingUpdates = useRef(false);
+  const announcedUpdates = useRef(new Set<string>());
   const finishedJobs = useRef(new Set<string>());
   const checkedAtStartup = useRef(false);
 
@@ -59,22 +64,37 @@ export function useHub() {
     }
   }, []);
 
-  const loadCatalogue = useCallback((force = false) => {
-    if (!catalogueRequest.current) {
-      setCatalogue((current) => ({ ...current, loading: true, error: "" }));
-      catalogueRequest.current = api.releases(force)
-        .then((data) => setCatalogue({ data, loading: false, error: "" }))
-        .catch((error: unknown) => setCatalogue((current) => ({
-          ...current,
-          loading: false,
-          error: errorMessage(error),
-        })))
-        .finally(() => {
-          catalogueRequest.current = null;
-        });
+  const loadCatalogue = useCallback(function load(force = false): Promise<CatalogueResult> {
+    const pending = catalogueRequest.current;
+    if (pending) {
+      return force && !pending.force ? pending.promise.then(() => load(true)) : pending.promise;
     }
-    return catalogueRequest.current;
+    setCatalogue((current) => ({ ...current, loading: true, error: "" }));
+    const promise = api.releases(force)
+      .then<CatalogueResult, CatalogueResult>(
+        (data) => ({ data, error: "" }),
+        (error: unknown) => ({ data: null, error: errorMessage(error) }),
+      )
+      .then((result) => {
+        setCatalogue((current) => ({ ...result, data: result.data ?? current.data, loading: false }));
+        return result;
+      })
+      .finally(() => { catalogueRequest.current = null; });
+    catalogueRequest.current = { force, promise };
+    return promise;
   }, []);
+
+  const checkUpdates = useCallback(async () => {
+    if (checkingUpdates.current) return;
+    checkingUpdates.current = true;
+    setUpdateCheck((current) => ({ ...current, loading: true, error: "" }));
+    const result = await loadCatalogue(true);
+    setUpdateCheck((current) => ({ ...result, data: result.data ?? current.data, loading: false }));
+    checkingUpdates.current = false;
+  }, [loadCatalogue]);
+
+  const checkedReleases = updateCheck.data?.releases;
+  const updates = useMemo(() => checkedReleases ? findEngineUpdates(installed.data, checkedReleases) : [], [installed.data, checkedReleases]);
 
   const recordJob = useCallback((job: Job) => {
     setJobs((current) => mergeJobs(current, [job]));
@@ -110,8 +130,20 @@ export function useHub() {
   useEffect(() => {
     if (!settings.data || checkedAtStartup.current) return;
     checkedAtStartup.current = true;
-    if (settings.data.autoCheckUpdates) void loadCatalogue();
-  }, [settings.data, loadCatalogue]);
+    if (settings.data.autoCheckUpdates) void checkUpdates();
+  }, [settings.data, checkUpdates]);
+
+  useEffect(() => {
+    if (installed.loading || installed.error || updateCheck.loading || updateCheck.error || updateCheck.data?.stale) return;
+    const fresh = updates.filter((update) => !announcedUpdates.current.has(updateKey(update)));
+    if (!fresh.length) return;
+    fresh.forEach((update) => announcedUpdates.current.add(updateKey(update)));
+    setNotice({
+      type: "success",
+      message: fresh.length === 1 ? `Godot ${fresh[0].release.tag} is available.` : `${fresh.length} Godot updates are available.`,
+      action: "updates",
+    });
+  }, [installed.loading, installed.error, updateCheck.loading, updateCheck.error, updateCheck.data?.stale, updates]);
 
   const hasActiveJobs = jobs.some(isActive);
 
@@ -128,8 +160,8 @@ export function useHub() {
     if (finished.some((job) => job.stage === "completed")) void loadInstalled(false);
     const failed = finished.find((job) => job.stage === "failed");
     setNotice(failed
-      ? { type: "error", message: `${failed.label} could not be installed.`, showDownloads: true }
-      : { type: "success", message: `${finished[0].label} installed.`, showDownloads: true });
+      ? { type: "error", message: `${failed.label} could not be installed.`, action: "downloads" }
+      : { type: "success", message: `${finished[0].label} installed.`, action: "downloads" });
   }, [jobs, loadInstalled]);
 
   useEffect(() => {
@@ -154,6 +186,9 @@ export function useHub() {
     loadInstalled,
     catalogue,
     loadCatalogue,
+    updates,
+    updateCheck,
+    checkUpdates,
     architecture,
     jobs,
     jobsLoading,

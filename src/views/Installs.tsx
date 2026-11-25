@@ -10,36 +10,26 @@ import {
 import type { Architecture, Build, Channel, Edition, InstalledEngine, Job, Release } from "../api";
 import { ErrorNotice, LoadingState, Modal, StatePanel } from "../components";
 import type { Hub } from "../useHub";
+import { updateKey } from "../updates";
+import type { EngineUpdate } from "../updates";
 
-export type InstallsTab = "installed" | "browse";
+export type InstallsTab = "installed" | "browse" | "updates";
 
 const channels: Array<Channel | "all"> = ["stable", "beta", "rc", "dev", "all"];
 const editions: Edition[] = ["standard", "dotnet"];
 const architectures: Architecture[] = ["x64", "arm64", "x86"];
 
-function stableVersion(tag: string) {
-  const match = /^(\d+)\.(\d+)(?:\.(\d+))?-stable$/i.exec(tag);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3] ?? "0")] : null;
+function installJobKey(tag: string, build: Build) {
+  return `install-${tag}-${build.edition}-${build.arch}`;
 }
 
-function compareVersions(first: number[], second: number[]) {
-  return first[0] - second[0] || first[1] - second[1] || first[2] - second[2];
-}
-
-function findStableUpdate(engines: InstalledEngine[], releases: Release[]) {
-  const current = engines.find((engine) => engine.isDefault);
-  const version = current && stableVersion(current.tag);
-  if (!current || !version) return null;
-
-  const candidates = releases.flatMap((release) => {
-    const candidate = stableVersion(release.tag);
-    if (!candidate || candidate[0] !== version[0] || compareVersions(candidate, version) <= 0) return [];
-    const build = release.builds.find((item) => item.edition === current.edition && item.arch === current.arch);
-    return build ? [{ release, build, version: candidate }] : [];
-  });
-  const latest = candidates.sort((first, second) => compareVersions(second.version, first.version))[0];
-  return latest && !engines.some((engine) => engine.tag === latest.release.tag &&
-    engine.edition === latest.build.edition && engine.arch === latest.build.arch) ? latest : null;
+function changelogs(release: Release) {
+  const { notes, tag } = release;
+  const version = tag.replace(/-stable$/, "");
+  return [
+    { label: "Complete changelog", curated: false, url: `https://godotengine.github.io/godot-interactive-changelog/#${version}` },
+    { label: "Curated changelog", curated: true, url: `https://github.com/godotengine/godot/blob/${tag}/CHANGELOG.md` },
+  ].filter(({ url }) => notes.includes(`(${url})`));
 }
 
 function ReleaseChannel({ channel }: { channel: Channel }) {
@@ -71,7 +61,7 @@ export function Installs({
   const [dialogError, setDialogError] = useState("");
   const [managedEngineId, setManagedEngineId] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [releaseDetails, setReleaseDetails] = useState<Release | null>(null);
+  const [releaseDetails, setReleaseDetails] = useState<{ release: Release; update?: EngineUpdate } | null>(null);
   const [jobIds, setJobIds] = useState<Record<string, string>>({});
   const architecture = selectedArchitecture ?? hub.architecture ?? "x64";
   const managedEngine = hub.installed.data.find((engine) => engine.id === managedEngineId);
@@ -104,7 +94,7 @@ export function Installs({
   function queueJob(key: string, job: Job) {
     hub.recordJob(job);
     setJobIds((current) => ({ ...current, [key]: job.id }));
-    hub.setNotice({ type: "success", message: "Download queued.", showDownloads: true });
+    hub.setNotice({ type: "success", message: "Download queued.", action: "downloads" });
   }
 
   function importEngine() {
@@ -118,11 +108,12 @@ export function Installs({
     });
   }
 
-  function install(tag: string, build: Build) {
-    const key = `install-${tag}-${build.edition}-${build.arch}`;
+  function install(tag: string, build: Build, inDialog = false) {
+    const key = installJobKey(tag, build);
     void perform(key, async () => {
       queueJob(key, await api.install(tag, build.edition, build.arch));
-    });
+      if (inDialog) setReleaseDetails(null);
+    }, inDialog);
   }
 
   function closeEngineDialog() {
@@ -141,10 +132,15 @@ export function Installs({
   }
 
   const search = query.trim().toLowerCase();
-  const autoCheckUpdates = hub.settings.data?.autoCheckUpdates;
-  const stableUpdate = useMemo(() => tab === "installed" && autoCheckUpdates && catalogueData
-    ? findStableUpdate(hub.installed.data, catalogueData.releases)
-    : null, [tab, autoCheckUpdates, catalogueData, hub.installed.data]);
+  const { updates, updateCheck } = hub;
+  const updateResultStale = Boolean(updateCheck.error || updateCheck.data?.stale);
+  const selectedRelease = releaseDetails?.release;
+  const selectedUpdate = releaseDetails?.update;
+  const selectedChangelogs = selectedRelease ? changelogs(selectedRelease) : [];
+
+  function openChangelog(release: Release, curated: boolean) {
+    void perform("open-changelog", () => api.openChangelog(release.tag, curated), true);
+  }
   const matchingReleases = useMemo(() => catalogueData?.releases.flatMap((release) => {
     if (channel !== "all" && release.channel !== channel) return [];
     if (search && !release.tag.toLowerCase().includes(search)) return [];
@@ -181,23 +177,21 @@ export function Installs({
         <button type="button" className={tab === "browse" ? "selected" : ""} aria-pressed={tab === "browse"} onClick={() => setTab("browse")}>
           Available releases
         </button>
+        <button type="button" className={tab === "updates" ? "selected" : ""} aria-pressed={tab === "updates"} onClick={() => setTab("updates")}>
+          Updates
+          {updates.length > 0 && <span className="tab-count">{updates.length}</span>}
+        </button>
       </div>
 
       {tab === "installed" ? (
         <section className="view-section" aria-label="Installed engines">
           {hub.installed.error && <ErrorNotice message={hub.installed.error} retry={() => void hub.loadInstalled()} />}
-          {stableUpdate && (
+          {updates.length > 0 && !updateResultStale && !updateCheck.loading && (
             <div className="notice information-notice" role="status">
               <ArrowUpCircle size={19} aria-hidden="true" />
-              <p>Godot {stableUpdate.release.tag} is available for {editionLabels[stableUpdate.build.edition]}.</p>
-              <button type="button" className="button secondary small" onClick={() => {
-                setChannel("stable");
-                setEdition(stableUpdate.build.edition);
-                setSelectedArchitecture(stableUpdate.build.arch);
-                setQuery(stableUpdate.release.tag);
-                setTab("browse");
-              }}>
-                View release
+              <p>{updates.length === 1 ? `Godot ${updates[0].release.tag} is available for ${editionLabels[updates[0].build.edition]}.` : `${updates.length} Godot updates are available.`}</p>
+              <button type="button" className="button secondary small" onClick={() => setTab("updates")}>
+                View updates
               </button>
             </div>
           )}
@@ -265,6 +259,67 @@ export function Installs({
             </ul>
           )}
         </section>
+      ) : tab === "updates" ? (
+        <section className="view-section" aria-label="Engine updates">
+          <div className="update-toolbar">
+            <p>Install updates alongside existing engines. Project files and engine assignments stay in place.</p>
+            <button type="button" className="button secondary" disabled={updateCheck.loading} onClick={() => void hub.checkUpdates()}>
+              <RefreshCw size={17} className={updateCheck.loading ? "spin" : undefined} />
+              {updateCheck.loading ? "Checking…" : "Check now"}
+            </button>
+          </div>
+          {hub.installed.error && <ErrorNotice message={hub.installed.error} retry={() => void hub.loadInstalled()} />}
+          {updateCheck.error && <ErrorNotice message={updateCheck.error} />}
+          {updateCheck.data?.stale && !updateCheck.error && (
+            <div className="notice information-notice" role="status">
+              <Info size={18} aria-hidden="true" />
+              <p>{updateCheck.data.warning || "Showing cached releases. Check again to reach GitHub."}</p>
+            </div>
+          )}
+          {(updateCheck.loading || hub.installed.loading) && updates.length === 0 && <LoadingState title="Checking for engine updates" />}
+          {!updateCheck.loading && !hub.installed.loading && !hub.installed.error && updates.length === 0 && (
+            !hub.installed.data.length ? (
+              <StatePanel icon={Box} title="No engines to check" description="Install or import a Godot editor to see compatible updates.">
+                <button type="button" className="button secondary" onClick={() => setTab("installed")}>View installs</button>
+              </StatePanel>
+            ) : updateCheck.data && !updateResultStale ? (
+              <StatePanel icon={Check} title="Installed engines are up to date" description="GitHub has no newer matching release for your installed engines." />
+            ) : !updateResultStale && (
+              <StatePanel icon={ArrowUpCircle} title="Check for engine updates" description="Check GitHub to find newer releases for the editions and architectures you have installed." />
+            )
+          )}
+          {updates.length > 0 && (
+            <ul className="item-list">
+              {updates.map((update) => {
+                const { current, release, build } = update;
+                const key = installJobKey(release.tag, build);
+                const installing = busy === key || isJobActive(key);
+                return (
+                  <li key={updateKey(update)} className="item-row release-row">
+                    <EditionIcon edition={build.edition} />
+                    <div className="item-content">
+                      <div className="item-title"><h2>Godot {release.tag}</h2><ReleaseChannel channel={release.channel} /></div>
+                      <p className="item-meta">
+                        <span>From {current.tag}</span><span>{editionLabels[build.edition]}</span>
+                        <span>{architectureLabels[build.arch]}</span><span>{formatSize(build.engine.size)}</span>
+                      </p>
+                    </div>
+                    <div className="row-actions">
+                      <button type="button" className="button secondary" onClick={() => {
+                        setDialogError("");
+                        setReleaseDetails({ release, update });
+                      }}><FileText size={16} /> Changelog</button>
+                      <button type="button" className="button primary" disabled={Boolean(busy) || installing} onClick={() => install(release.tag, build)}>
+                        {installing ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}
+                        {installing ? "Queued" : "Install alongside"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
       ) : (
         <section className="view-section" aria-label="Available releases">
           <div className="release-toolbar">
@@ -320,7 +375,7 @@ export function Installs({
           {matchingReleases.length > 0 && (
             <ul className="item-list">
               {matchingReleases.map(({ release, build }) => {
-                const key = `install-${release.tag}-${build.edition}-${build.arch}`;
+                const key = installJobKey(release.tag, build);
                 const alreadyInstalled = hub.installed.data.some((engine) => (
                   engine.tag === release.tag && engine.edition === edition && engine.arch === architecture
                 ));
@@ -342,7 +397,7 @@ export function Installs({
                     </div>
                     <div className="row-actions">
                       <button type="button" className="button ghost icon-button" aria-label={`Release notes for ${release.tag}`} title="Release notes" onClick={() => {
-                        setReleaseDetails(release);
+                        setReleaseDetails({ release });
                         setDialogError("");
                       }}>
                         <FileText size={18} />
@@ -426,24 +481,39 @@ export function Installs({
         </Modal>
       )}
 
-      {releaseDetails && (
-        <Modal title={`Godot ${releaseDetails.tag}`} busy={busy === "open-release"} onClose={() => {
+      {selectedRelease && (
+        <Modal title={`Godot ${selectedRelease.tag}`} busy={Boolean(busy)} onClose={() => {
           setReleaseDetails(null);
           setDialogError("");
         }}>
           <div className="release-details-heading">
-            <ReleaseChannel channel={releaseDetails.channel} />
-            <time dateTime={releaseDetails.publishedAt}>{formatDate(releaseDetails.publishedAt)}</time>
+            <ReleaseChannel channel={selectedRelease.channel} />
+            <time dateTime={selectedRelease.publishedAt}>{formatDate(selectedRelease.publishedAt)}</time>
           </div>
-          <h3>Release notes</h3>
-          <p className="release-notes">{releaseDetails.notes.trim() || "This GitHub release has no notes."}</p>
+          <h3>{selectedUpdate ? "Changelog" : "Release notes"}</h3>
+          {selectedChangelogs.length > 0 && (
+            <div className="changelog-links">
+              {selectedChangelogs.map(({ label, curated }) => (
+                <button key={label} type="button" className="text-button" disabled={Boolean(busy)} onClick={() => openChangelog(selectedRelease, curated)}>
+                  {label} <ExternalLink size={14} />
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="release-notes">{selectedRelease.notes.trim() || "This GitHub release has no notes."}</p>
           {dialogError && <ErrorNotice message={dialogError} />}
           <div className="modal-actions">
             <button type="button" className="button secondary" disabled={Boolean(busy)} onClick={() => void perform("open-release", async () => {
-              await api.openRelease(releaseDetails.tag);
+              await api.openRelease(selectedRelease.tag);
             }, true)}>
               <ExternalLink size={16} /> Open on GitHub
             </button>
+            {selectedUpdate && updates.some((update) => updateKey(update) === updateKey(selectedUpdate)) && (
+              <button type="button" className="button primary" disabled={Boolean(busy) || isJobActive(installJobKey(selectedRelease.tag, selectedUpdate.build))}
+                onClick={() => install(selectedRelease.tag, selectedUpdate.build, true)}>
+                <Download size={16} /> Install alongside
+              </button>
+            )}
           </div>
         </Modal>
       )}

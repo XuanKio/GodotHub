@@ -141,6 +141,22 @@ fn open_release_page(app: AppHandle, tag: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_changelog(app: AppHandle, tag: String, curated: bool) -> Result<(), String> {
+    if !engine::valid_tag(&tag) {
+        return Err("Invalid Godot release tag.".into());
+    }
+    let url = if curated {
+        format!("https://github.com/godotengine/godot/blob/{tag}/CHANGELOG.md")
+    } else {
+        let version = tag.strip_suffix("-stable").unwrap_or(&tag);
+        format!("https://godotengine.github.io/godot-interactive-changelog/#{version}")
+    };
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("Cannot open the Godot changelog: {e}"))
+}
+
+#[tauri::command]
 async fn create_engine_shortcut(
     app: AppHandle,
     hub: State<'_, Hub>,
@@ -430,6 +446,7 @@ fn main() {
             launch_engine,
             reveal_engine,
             open_release_page,
+            open_changelog,
             create_engine_shortcut,
             set_default_engine,
             remove_engine,

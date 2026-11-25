@@ -1,11 +1,12 @@
 {
   "name": "godot-hub",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/updates.test.mts",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri"
   },

@@ -105,7 +105,7 @@ function SettingsForm({ initial, hub }: { initial: HubSettings; hub: Hub }) {
             <span className="settings-icon"><Bell size={18} aria-hidden="true" /></span>
             <div className="setting-content">
               <p className="setting-label" id="update-setting">Check for engine updates at startup</p>
-              <p id="update-setting-description">Look for newer stable releases for the default editor when Godot Hub opens.</p>
+              <p id="update-setting-description">Check GitHub for updates to your installed engines when Godot Hub opens.</p>
             </div>
             <button
               type="button"

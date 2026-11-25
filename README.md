@@ -4,11 +4,13 @@
 
 ## Cài đặt và sử dụng
 
-1. Chạy `Godot Hub_0.1.0_x64-setup.exe` trên Windows 10/11 x64. Bộ cài NSIS đăng ký theo tài khoản hiện tại, tạo mục Start Menu và chọn sẵn shortcut Desktop. Có thể gỡ từ **Settings → Apps → Installed apps**. Bản build local chưa được ký Authenticode.
+1. Chạy `Godot Hub_0.2.0_x64-setup.exe` trên Windows 10/11 x64. Bộ cài NSIS đăng ký theo tài khoản hiện tại, tạo mục Start Menu và chọn sẵn shortcut Desktop. Có thể gỡ từ **Settings → Apps → Installed apps**. Bản build local chưa được ký Authenticode.
 2. Mở **Installs → Available releases**. Chọn kênh Stable, Beta, RC hoặc Dev, rồi chọn Standard hoặc .NET. Hub mặc định chọn kiến trúc tương ứng với máy.
 3. Bấm **Install**. Xem tiến trình tại **Downloads**. Khi hoàn tất, bấm **Open** tại **Installs → Installed** để mở trình quản lý project của engine đó.
 4. Dùng **Import engine** để thêm một file `.exe` đã giải nén. Hub đọc phiên bản và edition từ kết quả `--help` của file được chọn. Menu của mỗi engine có đặt mặc định, mở thư mục, tạo shortcut Desktop, cài Export Templates và gỡ engine. Gỡ một engine đã import chỉ xóa đăng ký trong Hub.
-5. Dùng **Settings** để chọn thư mục engine, thư mục project mặc định, giao diện và kiểm tra Godot mới khi mở Hub. Với bản .NET, cài [.NET SDK tương thích](https://docs.godotengine.org/en/stable/tutorials/scripting/c_sharp/c_sharp_basics.html) riêng để phát triển project C#.
+5. Vào **Installs → Updates** để kiểm tra hoặc xem các bản cập nhật, mở **Changelog** và chọn **Install alongside**. Tùy chọn **Settings → Check for engine updates at startup** điều khiển lần kiểm tra khi mở Hub. Với bản .NET, cài [.NET SDK tương thích](https://docs.godotengine.org/en/stable/tutorials/scripting/c_sharp/c_sharp_basics.html) riêng để phát triển project C#.
+
+Update Manager hiển thị bản mới phù hợp với edition và kiến trúc đang cài. Engine Stable nhận bản Stable mới nhất cùng major. Engine thử nghiệm nhận bản mới cùng major.minor, bao gồm Stable chính thức của nhánh đó. Hub xác thực lại danh mục GitHub khi kiểm tra và báo rõ khi dùng cache. Cài cập nhật tạo thư mục engine riêng, giữ engine mặc định, các bản đã cài và project hiện có.
 
 ## Build trên Windows
 
@@ -25,10 +27,11 @@ npm run tauri dev
 npm run tauri build -- --ci
 ```
 
-Đường dẫn mặc định `src-tauri/target/release/bundle/nsis/Godot Hub_0.1.0_x64-setup.exe`.
+Đường dẫn mặc định `src-tauri/target/release/bundle/nsis/Godot Hub_0.2.0_x64-setup.exe`.
 
 ```powershell
 npm run build
+npm test
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
@@ -38,6 +41,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 GodotHub/
 ├── src/
 │   ├── api.ts, useHub.ts         # IPC, state ứng dụng và tiến trình
+│   ├── updates.ts               # Chọn cập nhật theo phiên bản, edition và kiến trúc
 │   ├── App.tsx, styles.css       # Shell desktop, theme và bố cục
 │   └── views/                   # Projects, Installs, Downloads, Settings
 ├── public/                      # Icon giao diện
@@ -60,4 +64,4 @@ GodotHub/
 
 ## Phạm vi lộ trình
 
-Phase 1 gồm desktop shell, cấu hình, theme, icon và bộ cài. Phase 2 gồm danh mục thật, cài và quản lý engine, import, export templates, shortcut và tiến trình. Giao diện đã có release notes và báo phiên bản stable mới cho engine mặc định. Update Manager đầy đủ, quản lý project trong Hub, Plugin Manager và cập nhật chính Godot Hub nằm ở các phase kế tiếp.
+Phase 1 gồm desktop shell, cấu hình, theme, icon và bộ cài. Phase 2 gồm danh mục thật, cài và quản lý engine, import, export templates, shortcut và tiến trình. Phase 3 bổ sung Update Manager cho Godot Engine. Quản lý project trong Hub, Plugin Manager và cập nhật chính Godot Hub nằm ở các phase kế tiếp.
