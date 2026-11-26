@@ -232,11 +232,57 @@ async fn create_project(
     name: String,
     parent_directory: PathBuf,
     engine_id: String,
+    template: Option<project::Template>,
+    renderer: Option<project::Renderer>,
 ) -> Result<project::Project, String> {
     run_project_task(app, move |store| {
-        project::create(store, &name, &parent_directory, engine_id)
+        project::create(
+            store,
+            &name,
+            &parent_directory,
+            engine_id,
+            template.unwrap_or_default(),
+            renderer,
+        )
     })
     .await
+}
+
+#[tauri::command]
+async fn set_project_favorite(
+    app: AppHandle,
+    id: String,
+    favorite: bool,
+) -> Result<project::Project, String> {
+    run_project_task(app, move |store| project::set_favorite(store, &id, favorite)).await
+}
+
+#[tauri::command]
+async fn set_project_hidden(
+    app: AppHandle,
+    id: String,
+    hidden: bool,
+) -> Result<project::Project, String> {
+    run_project_task(app, move |store| project::set_hidden(store, &id, hidden)).await
+}
+
+#[tauri::command]
+async fn relocate_project(
+    app: AppHandle,
+    id: String,
+    project_file: PathBuf,
+) -> Result<project::Project, String> {
+    run_project_task(app, move |store| project::relocate(store, &id, &project_file)).await
+}
+
+#[tauri::command]
+async fn open_project_repository(app: AppHandle, id: String) -> Result<(), String> {
+    let opener = app.clone();
+    let url = run_project_task(app, move |store| project::repository_url(store, &id)).await?;
+    opener
+        .opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| format!("Cannot open the repository page: {error}"))
 }
 
 #[tauri::command]
@@ -640,6 +686,10 @@ fn main() {
             launch_project,
             reveal_project,
             discover_projects,
+            set_project_favorite,
+            set_project_hidden,
+            relocate_project,
+            open_project_repository,
             list_project_plugins,
             search_plugins,
             install_project_plugins,

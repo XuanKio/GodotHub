@@ -27,6 +27,13 @@ pub struct DiscoveryResult {
     limited: bool,
 }
 
+#[cfg(test)]
+impl DiscoveryResult {
+    pub fn added_count(&self) -> usize {
+        self.added
+    }
+}
+
 pub fn discover(
     store: &Store,
     godot_data: &Path,

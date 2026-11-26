@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Build, Channel, InstalledEngine, Release } from "../src/api.ts";
-import { findEngineUpdates, updateKey } from "../src/updates.ts";
+import { findEditorCandidates, findEngineUpdates, updateKey } from "../src/updates.ts";
 
 function build(edition: Build["edition"] = "standard", arch: Build["arch"] = "x64"): Build {
   return { edition, arch, engine: { name: "editor.zip", url: "https://example.com/editor.zip", size: 1 } };
@@ -98,4 +98,24 @@ test("compares a fourth legacy version component and skips unknown tags", () => 
 
   assert.deepEqual(updates, [{ current, release: target, build: target.builds[0] }]);
   assert.deepEqual(findEngineUpdates([installed("2.0.4.10-stable", { managed: false }), current], [older, target]), []);
+});
+
+test("suggests the pinned editor first, then the newest stable of the project's minor and major", () => {
+  const releases = [
+    release("4.5.1-stable"),
+    release("4.3.2-stable"),
+    release("4.3.1-stable"),
+    release("4.6-beta2", "beta"),
+    release("3.6.1-stable"),
+    release("4.2.2-stable", "stable", [build("dotnet")]),
+  ];
+  const tags = (request: Parameters<typeof findEditorCandidates>[1]) =>
+    findEditorCandidates(releases, request, "x64").map(({ release }) => release.tag);
+
+  assert.deepEqual(tags({ major: 4, minor: 3, tag: null, edition: "standard" }), ["4.3.2-stable", "4.3.1-stable", "4.5.1-stable"]);
+  assert.deepEqual(tags({ major: 4, minor: 3, tag: "4.6-beta2", edition: "standard" })[0], "4.6-beta2");
+  assert.deepEqual(tags({ major: 3, minor: null, tag: null, edition: "standard" }), ["3.6.1-stable"]);
+  assert.deepEqual(tags({ major: 4, minor: null, tag: null, edition: "dotnet" }), ["4.2.2-stable"]);
+  assert.deepEqual(tags({ major: 2, minor: null, tag: null, edition: "standard" }), []);
+  assert.equal(findEditorCandidates(releases, { major: 4, minor: 3, tag: null, edition: "standard" }, "x64")[0].recommended, true);
 });

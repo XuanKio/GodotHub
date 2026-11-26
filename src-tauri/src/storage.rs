@@ -51,7 +51,18 @@ pub struct ProjectRecord {
     pub added_at: u64,
     pub last_opened_at: Option<u64>,
     pub godot_major: Option<u8>,
+    #[serde(default)]
+    pub godot_minor: Option<u32>,
     pub requires_dotnet: bool,
+    #[serde(default)]
+    pub favorite: bool,
+    #[serde(default)]
+    pub hidden: bool,
+    /// Tag and edition of the assigned editor, kept so a removed editor can be reinstalled.
+    #[serde(default)]
+    pub engine_tag: Option<String>,
+    #[serde(default)]
+    pub engine_edition: Option<Edition>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

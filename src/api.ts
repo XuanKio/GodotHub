@@ -27,6 +27,15 @@ export interface InstalledEngine {
   available: boolean;
 }
 
+export type ProjectTemplate = "empty" | "twoD" | "threeD" | "ui";
+export type ProjectRenderer = "forwardPlus" | "mobile" | "compatibility" | "gles3" | "gles2";
+
+export interface ProjectGit {
+  branch: string | null;
+  detached: boolean;
+  repositoryUrl: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -36,8 +45,14 @@ export interface Project {
   addedAt: number;
   lastOpenedAt: number | null;
   godotMajor: number | null;
+  godotMinor: number | null;
   requiresDotnet: boolean;
+  favorite: boolean;
+  hidden: boolean;
+  engineTag: string | null;
+  engineEdition: Edition | null;
   missing: boolean;
+  git: ProjectGit | null;
 }
 
 export interface ProjectDiscovery {
@@ -148,8 +163,12 @@ export const api = {
   openRelease: (tag: string) => invoke<void>("open_release_page", { tag }),
   openChangelog: (tag: string, curated: boolean) => invoke<void>("open_changelog", { tag, curated }),
   projects: () => invoke<Project[]>("list_projects"),
-  createProject: (name: string, parentDirectory: string, engineId: string) =>
-    invoke<Project>("create_project", { name, parentDirectory, engineId }),
+  createProject: (name: string, parentDirectory: string, engineId: string, template: ProjectTemplate, renderer: ProjectRenderer | null) =>
+    invoke<Project>("create_project", { name, parentDirectory, engineId, template, renderer }),
+  setProjectFavorite: (id: string, favorite: boolean) => invoke<Project>("set_project_favorite", { id, favorite }),
+  setProjectHidden: (id: string, hidden: boolean) => invoke<Project>("set_project_hidden", { id, hidden }),
+  relocateProject: (id: string, projectFile: string) => invoke<Project>("relocate_project", { id, projectFile }),
+  openProjectRepository: (id: string) => invoke<void>("open_project_repository", { id }),
   importProject: (projectFile: string) => invoke<Project>("import_project", { projectFile }),
   setProjectEngine: (id: string, engineId: string | null) =>
     invoke<Project>("set_project_engine", { id, engineId }),
