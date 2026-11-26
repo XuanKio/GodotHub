@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Godot Hub",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "identifier": "com.godothub.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,6 +29,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": ["nsis"],
     "publisher": "Godot Hub",
     "shortDescription": "Manage Godot Engine installations on Windows",
@@ -40,6 +41,14 @@
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFMkZDNUY0MjE0Nzk0QTYKUldTbWxFY2g5TVV2bmoxMFRmZjRVMzZDWXQ4Lzk5dUhYUUZ4dVVUMzZ4bnFYWjhUSHNaaXE2cUUK",
+      "endpoints": ["https://github.com/XuanKio/GodotHub/releases/latest/download/latest.json"],
+      "requireSignedVersion": true,
+      "windows": { "installMode": "passive" }
     }
   }
 }

@@ -447,6 +447,10 @@ ul { margin: 0; padding: 0; list-style: none; }
   margin-bottom: 16px;
 }
 .update-toolbar > p { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.project-search { max-width: 460px; margin-bottom: 12px; }
+.hub-updates { margin-top: 24px; }
+.hub-updates progress { width: min(100%, 320px); margin-top: 8px; accent-color: var(--accent); }
+.hub-updates .notice { margin: 0 12px 12px; }
 
 .modal {
   width: min(520px, calc(100vw - 42px));
@@ -634,4 +638,36 @@ ul { margin: 0; padding: 0; list-style: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+.plugin-context {
+  display: grid;
+  grid-template-columns: minmax(205px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.plugin-context > .item-path { align-self: end; margin: 0; padding-bottom: 11px; }
+.plugin-project-picker { display: grid; gap: 6px; min-width: 0; color: var(--text); font-size: 13px; font-weight: 650; }
+.plugin-project-picker select { background: var(--background); }
+.plugin-tab-bar { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+.plugin-tab-bar > .tabs { flex: 1; border-bottom: 0; }
+.plugin-tab-bar > .button { margin-block: 2px; }
+.plugin-search { display: flex; gap: 8px; margin-bottom: 12px; }
+.plugin-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 14px; color: var(--muted); font-size: 12px; }
+.plugin-working { margin-bottom: 10px; color: var(--accent); font-size: 13px; }
+.plugin-row .plugin-description { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.plugin-row .plugin-managed { color: var(--accent); background: var(--accent-wash); }
+.plugin-backup p span { color: var(--text); user-select: text; }
+.plugin-remove-path { margin-top: 8px; }
+
+@media (max-width: 760px) {
+  .plugin-context { grid-template-columns: 1fr; gap: 8px; }
+  .plugin-context > .item-path { padding-bottom: 0; }
+  .plugin-tab-bar { flex-wrap: wrap; }
+  .plugin-tab-bar > .tabs { min-width: max-content; }
 }

@@ -10,6 +10,7 @@ export interface Settings {
   engineDirectory: string;
   projectDirectory: string;
   autoCheckUpdates: boolean;
+  autoUpdateHub: boolean;
   theme: Theme;
 }
 
@@ -37,6 +38,50 @@ export interface Project {
   godotMajor: number | null;
   requiresDotnet: boolean;
   missing: boolean;
+}
+
+export interface ProjectDiscovery {
+  projects: Project[];
+  added: number;
+  limited: boolean;
+}
+
+export interface ProjectPlugin {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  directory: string;
+  managed: boolean;
+}
+
+export interface LibraryPlugin {
+  id: number;
+  title: string;
+  author: string;
+  version: string;
+  category: string;
+  license: string;
+}
+
+export interface AssetSearch {
+  assets: LibraryPlugin[];
+  page: number;
+  pageCount: number;
+}
+
+export interface AppUpdate {
+  currentVersion: string;
+  version: string;
+  notes: string | null;
+  publishedAt: string | null;
+}
+
+export interface AppUpdateProgress {
+  downloaded: number;
+  total: number | null;
+  stage: "downloading" | "installing";
 }
 
 export interface Asset {
@@ -110,6 +155,20 @@ export const api = {
     invoke<Project>("set_project_engine", { id, engineId }),
   launchProject: (id: string) => invoke<Project>("launch_project", { id }),
   revealProject: (id: string) => invoke<void>("reveal_project", { id }),
+  discoverProjects: (directory?: string) => invoke<ProjectDiscovery>("discover_projects", { directory: directory ?? null }),
+  projectPlugins: (projectId: string) => invoke<ProjectPlugin[]>("list_project_plugins", { projectId }),
+  installProjectPlugins: (projectId: string, archivePath: string) =>
+    invoke<ProjectPlugin[]>("install_project_plugins", { projectId, archivePath }),
+  searchPlugins: (projectId: string, query: string, page: number) =>
+    invoke<AssetSearch>("search_plugins", { projectId, query, page }),
+  installLibraryPlugin: (projectId: string, assetId: number) =>
+    invoke<ProjectPlugin[]>("install_library_plugin", { projectId, assetId }),
+  removeProjectPlugin: (projectId: string, pluginId: string) =>
+    invoke<string>("remove_project_plugin", { projectId, pluginId }),
+  hubVersion: () => invoke<string>("hub_version"),
+  checkAppUpdate: () => invoke<AppUpdate | null>("check_app_update"),
+  installAppUpdate: (version: string) => invoke<boolean>("install_app_update", { version }),
+  pickPluginArchive: () => open({ title: "Choose a Godot plugin ZIP", multiple: false, filters: [{ name: "ZIP archive", extensions: ["zip"] }] }),
   pickEngine: () => open({
     title: "Select the Godot editor executable",
     multiple: false,

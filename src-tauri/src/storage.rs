@@ -19,7 +19,13 @@ pub struct Settings {
     pub engine_directory: PathBuf,
     pub project_directory: PathBuf,
     pub auto_check_updates: bool,
+    #[serde(default = "enabled")]
+    pub auto_update_hub: bool,
     pub theme: Theme,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 #[derive(Clone, Deserialize, Serialize)]

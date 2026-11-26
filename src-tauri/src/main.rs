@@ -5,7 +5,9 @@ mod catalog;
 mod download;
 mod engine;
 mod jobs;
+mod plugins;
 mod project;
+mod self_update;
 mod storage;
 mod windows_host;
 
@@ -26,11 +28,19 @@ struct Hub {
     catalog: Catalog,
     jobs: Jobs,
     godot_data: PathBuf,
+    maintenance: tokio::sync::RwLock<()>,
+    plugin_work: tokio::sync::Mutex<()>,
 }
 
 impl Hub {
     fn store(&self) -> Result<&Store, String> {
         self.store.as_ref().map_err(Clone::clone)
+    }
+
+    fn work_guard(&self) -> Result<tokio::sync::RwLockReadGuard<'_, ()>, String> {
+        self.maintenance
+            .try_read()
+            .map_err(|_| "Godot Hub is applying an update. Try again after it restarts.".into())
     }
 }
 
@@ -46,6 +56,7 @@ fn get_settings(hub: State<'_, Hub>) -> Result<Settings, String> {
 
 #[tauri::command]
 async fn save_settings(hub: State<'_, Hub>, mut settings: Settings) -> Result<Settings, String> {
+    let _guard = hub.work_guard()?;
     let store = hub.store()?;
     settings.engine_directory = storage::prepare_directory(&settings.engine_directory)?;
     settings.project_directory = storage::prepare_directory(&settings.project_directory)?;
@@ -86,6 +97,7 @@ async fn import_engine(
     hub: State<'_, Hub>,
     executable: PathBuf,
 ) -> Result<InstalledEngine, String> {
+    let _guard = hub.work_guard()?;
     engine::import(hub.store()?, &hub.godot_data, executable).await
 }
 
@@ -176,6 +188,7 @@ async fn create_engine_shortcut(
 
 #[tauri::command]
 fn set_default_engine(hub: State<'_, Hub>, id: String) -> Result<(), String> {
+    let _guard = hub.work_guard()?;
     engine::set_default(hub.store()?, &id)
 }
 
@@ -183,6 +196,7 @@ fn set_default_engine(hub: State<'_, Hub>, id: String) -> Result<(), String> {
 async fn remove_engine(app: AppHandle, id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let hub = app.state::<Hub>();
+        let _guard = hub.work_guard()?;
         let store = hub.store()?;
         let record = engine::get(store, &id)?;
         if hub.jobs.is_active(&format!("templates:{id}")) {
@@ -198,9 +212,13 @@ async fn run_project_task<T: Send + 'static>(
     app: AppHandle,
     operation: impl FnOnce(&Store) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || operation(app.state::<Hub>().store()?))
-        .await
-        .map_err(|error| format!("Project operation failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let hub = app.state::<Hub>();
+        let _guard = hub.work_guard()?;
+        operation(hub.store()?)
+    })
+    .await
+    .map_err(|error| format!("Project operation failed: {error}"))?
 }
 
 #[tauri::command]
@@ -245,6 +263,112 @@ async fn reveal_project(app: AppHandle, id: String) -> Result<(), String> {
     run_project_task(app, move |store| project::reveal(store, &id)).await
 }
 
+#[tauri::command]
+async fn discover_projects(
+    app: AppHandle,
+    directory: Option<PathBuf>,
+) -> Result<project::DiscoveryResult, String> {
+    let godot_data = app.state::<Hub>().godot_data.clone();
+    run_project_task(app, move |store| {
+        project::discover(store, &godot_data, directory.as_deref())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_project_plugins(
+    app: AppHandle,
+    project_id: String,
+) -> Result<Vec<plugins::ProjectPlugin>, String> {
+    run_project_task(app, move |store| {
+        plugins::list(&project::for_plugins(store, &project_id)?.0)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn search_plugins(
+    app: AppHandle,
+    project_id: String,
+    query: String,
+    page: u32,
+) -> Result<plugins::AssetSearch, String> {
+    let (_, version) =
+        run_project_task(app, move |store| project::for_plugins(store, &project_id)).await?;
+    let version = version
+        .ok_or("Assign a Godot editor to search the Asset Library for this project's version.")?;
+    plugins::search(&query, page, Some(&version)).await
+}
+
+#[tauri::command]
+async fn install_project_plugins(
+    app: AppHandle,
+    project_id: String,
+    archive_path: PathBuf,
+) -> Result<Vec<plugins::ProjectPlugin>, String> {
+    let hub = app.state::<Hub>();
+    let _guard = hub.work_guard()?;
+    let _slot = hub.plugin_work.lock().await;
+    run_project_task(app.clone(), move |store| {
+        plugins::install_zip(&project::for_plugins(store, &project_id)?.0, &archive_path)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn install_library_plugin(
+    app: AppHandle,
+    project_id: String,
+    asset_id: u64,
+) -> Result<Vec<plugins::ProjectPlugin>, String> {
+    let hub = app.state::<Hub>();
+    let _guard = hub.work_guard()?;
+    let _slot = hub.plugin_work.lock().await;
+    let (directory, _) = run_project_task(app.clone(), move |store| {
+        project::for_plugins(store, &project_id)
+    })
+    .await?;
+    plugins::install_library(&directory, asset_id).await
+}
+
+#[tauri::command]
+async fn remove_project_plugin(
+    app: AppHandle,
+    project_id: String,
+    plugin_id: String,
+) -> Result<PathBuf, String> {
+    let hub = app.state::<Hub>();
+    let _guard = hub.work_guard()?;
+    let _slot = hub.plugin_work.lock().await;
+    run_project_task(app.clone(), move |store| {
+        plugins::remove(&project::for_plugins(store, &project_id)?.0, &plugin_id)
+    })
+    .await
+}
+
+#[tauri::command]
+fn hub_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
+async fn check_app_update(app: AppHandle) -> Result<Option<self_update::AppUpdate>, String> {
+    self_update::check(&app).await
+}
+
+#[tauri::command]
+async fn install_app_update(app: AppHandle, version: String) -> Result<bool, String> {
+    let hub = app.state::<Hub>();
+    let Ok(_idle) = hub.maintenance.try_write() else {
+        return Ok(false);
+    };
+    if hub.jobs.has_active() {
+        return Ok(false);
+    }
+    self_update::install(&app, version).await?;
+    Ok(true)
+}
+
 enum Install {
     Engine {
         directory: PathBuf,
@@ -266,6 +390,7 @@ async fn install_engine(
     edition: Edition,
     arch: String,
 ) -> Result<Job, String> {
+    let _guard = hub.work_guard()?;
     let folder = engine::engine_directory_name(&tag, edition, &arch)?;
     if !windows_host::compatible(&arch) {
         return Err(format!(
@@ -324,6 +449,7 @@ async fn install_engine(
 
 #[tauri::command]
 async fn install_templates(app: AppHandle, hub: State<'_, Hub>, id: String) -> Result<Job, String> {
+    let _guard = hub.work_guard()?;
     let store = hub.store()?;
     let record = engine::get(store, &id)?;
     require_executable(&record)?;
@@ -469,6 +595,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let paths = app.path();
             let local_data = paths.app_local_data_dir()?;
@@ -476,6 +603,7 @@ fn main() {
                 engine_directory: local_data.join("engines"),
                 project_directory: paths.document_dir()?.join("Godot Projects"),
                 auto_check_updates: true,
+                auto_update_hub: true,
                 theme: Theme::Dark,
             };
             app.manage(Hub {
@@ -483,6 +611,8 @@ fn main() {
                 catalog: Catalog::new(local_data.join("catalog")).map_err(io::Error::other)?,
                 jobs: Jobs::default(),
                 godot_data: paths.data_dir()?.join("Godot"),
+                maintenance: tokio::sync::RwLock::new(()),
+                plugin_work: tokio::sync::Mutex::new(()),
             });
             Ok(())
         })
@@ -509,6 +639,15 @@ fn main() {
             set_project_engine,
             launch_project,
             reveal_project,
+            discover_projects,
+            list_project_plugins,
+            search_plugins,
+            install_project_plugins,
+            install_library_plugin,
+            remove_project_plugin,
+            hub_version,
+            check_app_update,
+            install_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("Could not run Godot Hub");

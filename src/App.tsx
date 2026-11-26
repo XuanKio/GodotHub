@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Box, CheckCircle, CircleAlert, Download, FolderKanban, Monitor, Settings2, X } from "lucide-react";
+import { ArrowUpRight, Box, CheckCircle, CircleAlert, Download, FolderKanban, LoaderCircle, Monitor, Puzzle, Settings2, X } from "lucide-react";
 import { architectureLabels, isActive } from "./api";
 import { useHub } from "./useHub";
+import { useAppUpdater } from "./useAppUpdater";
 import { Downloads } from "./views/Downloads";
 import { Installs } from "./views/Installs";
 import type { InstallsTab } from "./views/Installs";
 import { Projects } from "./views/Projects";
+import { Plugins } from "./views/Plugins";
 import { Settings } from "./views/Settings";
 
 const navigation = [
   { name: "Projects", id: "projects", icon: FolderKanban },
   { name: "Installs", id: "installs", icon: Box },
+  { name: "Plugins", id: "plugins", icon: Puzzle },
   { name: "Downloads", id: "downloads", icon: Download },
   { name: "Settings", id: "settings", icon: Settings2 },
 ] as const;
@@ -23,6 +26,8 @@ export function App() {
   const main = useRef<HTMLElement>(null);
   const hub = useHub();
   const activeCount = hub.jobs.filter(isActive).length;
+  const updater = useAppUpdater(hub.settings.data?.autoUpdateHub, activeCount > 0);
+  const applyingAppUpdate = updater.stage === "downloading" || updater.stage === "installing";
 
   useEffect(() => {
     main.current?.scrollTo(0, 0);
@@ -50,8 +55,8 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <Monitor size={16} aria-hidden="true" />
-          <span>Windows{hub.architecture && ` · ${architectureLabels[hub.architecture]}`}</span>
+          {applyingAppUpdate ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : <Monitor size={16} aria-hidden="true" />}
+          {applyingAppUpdate ? <span role="status">Updating Godot Hub…</span> : <span>Windows{hub.architecture && ` · ${architectureLabels[hub.architecture]}`}{updater.version && ` · ${updater.version}`}</span>}
         </div>
       </aside>
       <main className="main-surface" ref={main}>
@@ -59,7 +64,8 @@ export function App() {
           <Installs hub={hub} tab={installsTab} setTab={setInstallsTab} />
         </div>
         {view === "downloads" && <Downloads hub={hub} onBrowse={browseReleases} />}
-        {view === "settings" && <Settings hub={hub} />}
+        {view === "settings" && <Settings hub={hub} updater={updater} />}
+        {view === "plugins" && <Plugins hub={hub} onProjects={() => setView("projects")} />}
         {view === "projects" && <Projects hub={hub} onBrowse={browseReleases} />}
       </main>
       {hub.notice && (

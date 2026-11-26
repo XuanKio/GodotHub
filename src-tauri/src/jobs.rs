@@ -51,6 +51,14 @@ pub struct Jobs {
 }
 
 impl Jobs {
+    pub fn has_active(&self) -> bool {
+        self.entries
+            .lock()
+            .expect("Job lock poisoned")
+            .iter()
+            .any(|(_, job)| !job.stage.finished())
+    }
+
     pub fn all(&self) -> Vec<Job> {
         self.entries
             .lock()

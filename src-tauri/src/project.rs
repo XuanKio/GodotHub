@@ -15,6 +15,9 @@ use std::{
 };
 use uuid::Uuid;
 
+mod discovery;
+pub use discovery::{discover, DiscoveryResult};
+
 const MAX_PROJECT_CONFIG_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Serialize)]
@@ -276,6 +279,32 @@ fn get(store: &Store, id: &str) -> Result<ProjectRecord, String> {
                 .cloned()
         })
         .ok_or_else(|| "That project is no longer registered.".into())
+}
+
+pub fn for_plugins(store: &Store, id: &str) -> Result<(PathBuf, Option<String>), String> {
+    let record = get(store, id)?;
+    let info = inspect(&record.project_file)?;
+    if !same_path(
+        &canonical_path(&record.directory).map_err(|e| e.to_string())?,
+        &record.directory,
+    ) {
+        return Err(
+            "The project folder has moved. Import it at its new location before managing plugins."
+                .into(),
+        );
+    }
+    let version = record
+        .engine_id
+        .and_then(|id| crate::engine::get(store, &id).ok())
+        .and_then(|engine| {
+            Some(format!(
+                "{}.{}",
+                engine_major(&engine)?,
+                engine_minor(&engine).ok()?
+            ))
+        })
+        .or_else(|| info.godot_major.map(|major| format!("{major}.99")));
+    Ok((record.directory, version))
 }
 
 fn new_record(
@@ -638,6 +667,7 @@ mod tests {
             engine_directory: root.join("engines"),
             project_directory: root.join("projects"),
             auto_check_updates: true,
+            auto_update_hub: false,
             theme: Theme::Dark,
         }
     }

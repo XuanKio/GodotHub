@@ -11,8 +11,17 @@ const MAX_UNCOMPRESSED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub fn extract(archive: &Path, destination: &Path) -> Result<(), String> {
     let file =
         File::open(archive).map_err(|error| format!("Could not open the archive: {error}"))?;
+    extract_file(file, destination, MAX_FILES, MAX_UNCOMPRESSED_BYTES)
+}
+
+pub(crate) fn extract_file(
+    file: File,
+    destination: &Path,
+    max_files: usize,
+    max_uncompressed_bytes: u64,
+) -> Result<(), String> {
     let mut zip = ZipArchive::new(file).map_err(|error| format!("Invalid ZIP archive: {error}"))?;
-    if zip.is_empty() || zip.len() > MAX_FILES {
+    if zip.is_empty() || zip.len() > max_files {
         return Err("The archive is empty or contains too many entries.".into());
     }
     fs::create_dir_all(destination)
@@ -59,8 +68,13 @@ pub fn extract(archive: &Path, destination: &Path) -> Result<(), String> {
         let size = entry.size();
         total = total
             .checked_add(size)
-            .filter(|&size| size <= MAX_UNCOMPRESSED_BYTES)
-            .ok_or("The archive expands past the 8 GiB extraction limit.")?;
+            .filter(|&size| size <= max_uncompressed_bytes)
+            .ok_or_else(|| {
+                format!(
+                    "The archive expands past the {} MiB extraction limit.",
+                    max_uncompressed_bytes / (1024 * 1024)
+                )
+            })?;
         let parent = output
             .parent()
             .ok_or("The archive entry has no parent folder.")?;
@@ -87,7 +101,7 @@ pub fn extract(archive: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn is_filesystem_link(metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_filesystem_link(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -114,7 +128,7 @@ fn archive_path(name: &str, is_directory: bool) -> Option<PathBuf> {
     Some(path)
 }
 
-fn valid_windows_component(name: &str) -> bool {
+pub(crate) fn valid_windows_component(name: &str) -> bool {
     if name.is_empty()
         || name.ends_with(['.', ' '])
         || name

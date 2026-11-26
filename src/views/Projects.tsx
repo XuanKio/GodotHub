@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  Box, ChevronDown, FolderKanban, FolderOpen, Import, LoaderCircle, Play, Plus,
+  Box, ChevronDown, FolderKanban, FolderOpen, Import, LoaderCircle, Play, Plus, ScanSearch, Search,
 } from "lucide-react";
 import { api, architectureLabels, editionLabels, errorMessage, formatDate } from "../api";
 import type { InstalledEngine, Project } from "../api";
@@ -211,17 +211,21 @@ export function Projects({ hub, onBrowse }: { hub: Hub; onBrowse: () => void }) 
   const [busy, setBusy] = useState("");
   const [creating, setCreating] = useState(false);
   const [assigning, setAssigning] = useState<Project | null>(null);
+  const [query, setQuery] = useState("");
   const engines = hub.installed.data;
   const readyEngines = engines.filter((engine) => engine.available && /^[234]\./.test(engine.tag));
   const engineListReady = !hub.installed.loading && !hub.installed.error;
   const defaultDirectory = hub.settings.data?.projectDirectory ?? "";
   const canStartCreate = !busy && !loading && !error && engineListReady && !hub.settings.loading;
 
-  const loadProjects = useCallback(async (showLoading = true) => {
+  const loadProjects = useCallback(async (showLoading = true, discover = false) => {
     if (showLoading) setLoading(true);
     setError("");
     try {
-      setProjects(await api.projects());
+      const result = discover
+        ? await api.discoverProjects().then(({ projects }) => projects).catch(() => api.projects())
+        : await api.projects();
+      setProjects(result);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -229,7 +233,7 @@ export function Projects({ hub, onBrowse }: { hub: Hub; onBrowse: () => void }) 
     }
   }, []);
 
-  useEffect(() => { void loadProjects(); }, [loadProjects]);
+  useEffect(() => { void loadProjects(true, true); }, [loadProjects]);
 
   async function perform(key: string, action: () => Promise<void>) {
     setBusy(key);
@@ -256,6 +260,18 @@ export function Projects({ hub, onBrowse }: { hub: Hub; onBrowse: () => void }) 
     });
   }
 
+  async function scanFolder() {
+    await perform("scan", async () => {
+      const directory = await api.pickDirectory("Select a folder containing Godot projects", defaultDirectory);
+      if (!directory) return;
+      const result = await api.discoverProjects(directory);
+      setProjects(result.projects);
+      setQuery("");
+      const found = result.added ? `Added ${result.added} project${result.added === 1 ? "" : "s"}.` : "No new Godot projects found.";
+      hub.setNotice({ type: "success", message: result.limited ? `${found} Select a smaller folder to scan deeper.` : found });
+    });
+  }
+
   function createCompleted(project: Project) {
     setCreating(false);
     hub.setNotice({ type: "success", message: `${project.name} created.` });
@@ -274,6 +290,10 @@ export function Projects({ hub, onBrowse }: { hub: Hub; onBrowse: () => void }) 
     onBrowse();
   }
 
+  const search = query.trim().toLowerCase();
+  const matchingProjects = projects.filter((project) =>
+    project.name.toLowerCase().includes(search) || project.directory.toLowerCase().includes(search));
+
   return (
     <>
       <header className="page-heading">
@@ -282,6 +302,9 @@ export function Projects({ hub, onBrowse }: { hub: Hub; onBrowse: () => void }) 
           <p>Create projects and open them with the Godot editor you choose.</p>
         </div>
         <div className="heading-actions">
+          <button type="button" className="button secondary" onClick={() => void scanFolder()} disabled={Boolean(busy) || loading || hub.settings.loading}>
+            {busy === "scan" ? <LoaderCircle size={17} className="spin" /> : <ScanSearch size={17} />} Scan folder
+          </button>
           <button type="button" className="button secondary" onClick={() => void importProject()} disabled={Boolean(busy) || loading || Boolean(error)}>
             {busy === "import" ? <LoaderCircle size={17} className="spin" /> : <Import size={17} />} Import project
           </button>
@@ -295,13 +318,18 @@ export function Projects({ hub, onBrowse }: { hub: Hub; onBrowse: () => void }) 
         {hub.installed.error && hub.installed.error !== error && <ErrorNotice message={hub.installed.error} retry={() => void hub.loadInstalled()} />}
         {loading && !projects.length && <LoadingState title="Loading projects" />}
         {!loading && !error && !projects.length && (
-          <StatePanel icon={FolderKanban} title="No projects yet" description="Create a project or import an existing Godot project file." />
+          <StatePanel icon={FolderKanban} title="No projects yet" description="Use Scan folder to find your existing Godot projects, or create a new project." />
         )}
         {projects.length > 0 && (
           <>
             <h2 className="section-title">Recent projects</h2>
+            <label className="search-field project-search">
+              <Search size={17} aria-hidden="true" />
+              <input type="search" aria-label="Search projects" placeholder="Search by name or path" value={query} onChange={(event) => setQuery(event.target.value)} />
+            </label>
+            {!matchingProjects.length && <p className="modal-copy">No projects match your search.</p>}
             <ul className="item-list">
-              {projects.map((project) => {
+              {matchingProjects.map((project) => {
                 const engine = engines.find((item) => item.id === project.engineId);
                 const validEngine = engine && engine.available !== false && isCompatible(engine, project);
                 const canOpen = engineListReady && validEngine && !project.missing;

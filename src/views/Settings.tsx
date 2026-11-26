@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Bell, Folder, FolderOpen, HardDrive, LoaderCircle, Moon, Sun } from "lucide-react";
-import { api, errorMessage } from "../api";
+import { Bell, Download, Folder, FolderOpen, HardDrive, LoaderCircle, Moon, RefreshCw, Sun } from "lucide-react";
+import { api, errorMessage, formatSize } from "../api";
 import type { Settings as HubSettings, Theme } from "../api";
 import { ErrorNotice, LoadingState } from "../components";
 import type { Hub } from "../useHub";
+import type { AppUpdater } from "../useAppUpdater";
 
 function DirectoryField({
   name,
@@ -62,7 +63,7 @@ function SettingsForm({ initial, hub }: { initial: HubSettings; hub: Hub }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const dirty = draft.engineDirectory !== initial.engineDirectory || draft.projectDirectory !== initial.projectDirectory ||
-    draft.autoCheckUpdates !== initial.autoCheckUpdates || draft.theme !== initial.theme;
+    draft.autoCheckUpdates !== initial.autoCheckUpdates || draft.autoUpdateHub !== initial.autoUpdateHub || draft.theme !== initial.theme;
 
   function update<K extends keyof HubSettings>(key: K, value: HubSettings[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -121,6 +122,18 @@ function SettingsForm({ initial, hub }: { initial: HubSettings; hub: Hub }) {
             </button>
           </div>
           <div className="setting-row">
+            <span className="settings-icon"><Download size={18} aria-hidden="true" /></span>
+            <div className="setting-content">
+              <p className="setting-label" id="hub-update-setting">Automatically update Godot Hub</p>
+              <p id="hub-update-setting-description">Download verified app updates at startup and install them when downloads and project operations finish.</p>
+            </div>
+            <button type="button" className="toggle" role="switch" aria-checked={draft.autoUpdateHub}
+              aria-labelledby="hub-update-setting" aria-describedby="hub-update-setting-description" disabled={saving}
+              onClick={() => update("autoUpdateHub", !draft.autoUpdateHub)}>
+              <span />
+            </button>
+          </div>
+          <div className="setting-row">
             <span className="settings-icon"><Sun size={18} aria-hidden="true" /></span>
             <div className="setting-content">
               <p className="setting-label" id="appearance-setting">Appearance</p>
@@ -148,7 +161,42 @@ function SettingsForm({ initial, hub }: { initial: HubSettings; hub: Hub }) {
   );
 }
 
-export function Settings({ hub }: { hub: Hub }) {
+function HubUpdates({ updater }: { updater: AppUpdater }) {
+  const { stage, version, candidate, progress, error } = updater;
+  const running = stage === "checking" || stage === "downloading" || stage === "installing";
+  const descriptions = {
+    idle: "Check GitHub for a Godot Hub update.",
+    checking: "Checking for updates…",
+    current: "Godot Hub is up to date.",
+    ready: candidate ? `Godot Hub ${candidate.version} is available.` : "An update is available.",
+    waiting: "The update is waiting for active work to finish.",
+    downloading: progress ? `Downloaded ${formatSize(progress.downloaded)}${progress.total ? ` of ${formatSize(progress.total)}` : ""}.` : "Starting the update download…",
+    installing: "Installing the update. Godot Hub will restart.",
+    error: "The last update check or installation could not finish.",
+  };
+  return (
+    <section className="settings-group hub-updates" aria-label="Godot Hub updates">
+      <h2 className="section-title">Godot Hub updates</h2>
+      <div className="settings-card">
+        <div className="setting-row">
+          <span className="settings-icon"><RefreshCw size={18} className={running ? "spin" : undefined} aria-hidden="true" /></span>
+          <div className="setting-content">
+            <p className="setting-label">{version ? `Installed version ${version}` : "Installed version"}</p>
+            <p role="status">{descriptions[stage]}</p>
+            {stage === "downloading" && <progress aria-label="Godot Hub update download" max={progress?.total ?? 1} value={progress?.total ? progress.downloaded : undefined} />}
+          </div>
+          <div className="row-actions">
+            {candidate && !running && <button type="button" className="button primary" disabled={updater.activeDownloads} onClick={() => void updater.install()}>Install update</button>}
+            <button type="button" className="button secondary" disabled={running} onClick={() => void updater.check()}>Check now</button>
+          </div>
+        </div>
+        {error && <ErrorNotice message={error} />}
+      </div>
+    </section>
+  );
+}
+
+export function Settings({ hub, updater }: { hub: Hub; updater: AppUpdater }) {
   return (
     <>
       <header className="page-heading">
@@ -161,6 +209,7 @@ export function Settings({ hub }: { hub: Hub }) {
         {hub.settings.error && <ErrorNotice message={hub.settings.error} retry={() => void hub.loadSettings()} />}
         {hub.settings.loading && !hub.settings.data && <LoadingState title="Loading settings" />}
         {hub.settings.data && <SettingsForm initial={hub.settings.data} hub={hub} />}
+        <HubUpdates updater={updater} />
       </div>
     </>
   );

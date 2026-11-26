@@ -1,0 +1,107 @@
+name: Release Godot Hub for Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'XuanKio/GodotHub'
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Verify release version
+        run: |
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -cnotmatch '^v\d+\.\d+\.\d+$' -or
+              $env:GITHUB_REF_NAME -cne "v$($config.version)" -or $package.version -cne $config.version) {
+            throw 'The tag must match the version in tauri.conf.json and package.json.'
+          }
+
+      - name: Install dependencies and test frontend
+        run: |
+          rustup update stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup target add x86_64-pc-windows-msvc --toolchain stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test
+
+      - name: Build and sign installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY -or -not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+            throw 'The updater key and its password must be configured as GitHub Actions secrets.'
+          }
+          $override = Join-Path $env:RUNNER_TEMP 'updater-release.json'
+          '{"bundle":{"createUpdaterArtifacts":true}}' | Set-Content -LiteralPath $override -Encoding utf8NoBOM
+          npm run tauri -- build --ci --target x86_64-pc-windows-msvc --config $override -- --locked
+
+      - name: Stage installer and signed updater manifest
+        run: |
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $version = $config.version
+          $bundle = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Godot Hub_${version}_x64-setup.exe"
+          $signaturePath = "$bundle.sig"
+          $signature = (Get-Content -LiteralPath $signaturePath -Raw).Trim()
+          $signedText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($signature)) -split '\r?\n'
+          $publicText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($config.plugins.updater.pubkey)) -split '\r?\n'
+          $signedKeyId = [Convert]::FromBase64String($signedText[1])[2..9]
+          $expectedKeyId = [Convert]::FromBase64String($publicText[1])[2..9]
+          $versionField = 'version:' + $version
+          if ([Convert]::ToHexString($signedKeyId) -cne [Convert]::ToHexString($expectedKeyId) -or
+              ($signedText[2] -split "`t") -cnotcontains $versionField) {
+            throw 'The installer signature key or trusted version does not match the release.'
+          }
+
+          $staging = Join-Path $env:RUNNER_TEMP 'GodotHubRelease'
+          [void](New-Item -ItemType Directory -Path $staging)
+          $installer = "Godot-Hub_${version}_x64-setup.exe"
+          Copy-Item -LiteralPath $bundle -Destination (Join-Path $staging $installer)
+          Copy-Item -LiteralPath $signaturePath -Destination (Join-Path $staging "$installer.sig")
+          $releases = "https://github.com/$env:GITHUB_REPOSITORY/releases"
+          $platform = @{
+            url = "$releases/download/$env:GITHUB_REF_NAME/$installer"
+            signature = $signature
+          }
+          @{
+            version = $version
+            notes = "Release notes at $releases/tag/$env:GITHUB_REF_NAME"
+            pub_date = [DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platforms = @{ 'windows-x86_64' = $platform }
+          } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $staging 'latest.json') -Encoding utf8NoBOM
+
+      - name: Publish complete GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $staging = Join-Path $env:RUNNER_TEMP 'GodotHubRelease'
+          $assets = @(Get-ChildItem -LiteralPath $staging -File | Select-Object -ExpandProperty FullName)
+          gh release create $env:GITHUB_REF_NAME @assets --repo $env:GITHUB_REPOSITORY --draft --verify-tag --generate-notes --title "Godot Hub $env:GITHUB_REF_NAME"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false
