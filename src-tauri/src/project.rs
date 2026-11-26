@@ -16,7 +16,12 @@ use std::{
 use uuid::Uuid;
 
 mod discovery;
+mod git;
+mod manage;
+mod template;
 pub use discovery::{discover, DiscoveryResult};
+pub use manage::{relocate, repository_url, set_favorite, set_hidden};
+pub use template::{Renderer, Template};
 
 const MAX_PROJECT_CONFIG_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -26,6 +31,7 @@ pub struct Project {
     #[serde(flatten)]
     record: ProjectRecord,
     missing: bool,
+    git: Option<git::GitInfo>,
 }
 
 impl Project {
@@ -36,13 +42,23 @@ impl Project {
                 info.apply(&mut record);
             }
         }
-        Self { record, missing }
+        Self::present(record, missing)
+    }
+
+    fn present(record: ProjectRecord, missing: bool) -> Self {
+        let git = (!missing).then(|| git::inspect(&record.directory)).flatten();
+        Self {
+            record,
+            missing,
+            git,
+        }
     }
 }
 
 struct ProjectInfo {
     name: Option<String>,
     godot_major: Option<u8>,
+    godot_minor: Option<u32>,
     requires_dotnet: bool,
 }
 
@@ -52,6 +68,7 @@ impl ProjectInfo {
             record.name.clone_from(name);
         }
         record.godot_major = self.godot_major;
+        record.godot_minor = self.godot_minor;
         record.requires_dotnet = self.requires_dotnet;
     }
 }
@@ -60,6 +77,7 @@ pub fn list(store: &Store) -> Vec<Project> {
     let mut projects = store.read(|state| state.projects.clone());
     projects.sort_by_key(|record| {
         Reverse((
+            record.favorite,
             record.last_opened_at.unwrap_or(record.added_at),
             record.added_at,
         ))
@@ -72,14 +90,16 @@ pub fn create(
     name: &str,
     parent: &Path,
     engine_id: String,
+    template: Template,
+    renderer: Option<Renderer>,
 ) -> Result<Project, String> {
     let name = project_name(name)?;
     let parent = resolve_parent(parent)?;
     let mut created_directory = None;
-    let mut created_file = None;
+    let mut created_files: Vec<(PathBuf, String)> = Vec::new();
     let result = store.update(|state| {
-        let engine = available_engine(state, &engine_id)?;
-        let (file_name, content) = new_project_contents(&name, engine)?;
+        let engine = available_engine(state, &engine_id)?.clone();
+        let contents = new_project_contents(&name, &engine, template, renderer)?;
         outside_managed_engines(state, &parent)?;
         let parent = crate::storage::prepare_directory(&parent)?;
         outside_managed_engines(state, &parent)?;
@@ -110,22 +130,25 @@ pub fn create(
         })?;
         created_directory = Some(directory.clone());
 
-        let project_file = directory.join(file_name);
-        write_project(&project_file, &content)?;
-        created_file = Some((project_file.clone(), content));
+        if let Some(scene) = contents.scene {
+            let scene_file = directory.join(template::MAIN_SCENE);
+            write_project(&scene_file, &scene)?;
+            created_files.push((scene_file, scene));
+        }
+        let project_file = directory.join(contents.file_name);
+        write_project(&project_file, &contents.project)?;
+        created_files.push((project_file.clone(), contents.project));
         let info = inspect(&project_file)?;
-        let project = new_record(directory, project_file, Some(engine_id), &info);
+        let mut project = new_record(directory, project_file, Some(engine_id), &info);
+        pin_engine(&mut project, &engine);
         state.projects.push(project.clone());
         Ok(project)
     });
 
     match result {
-        Ok(record) => Ok(Project {
-            record,
-            missing: false,
-        }),
+        Ok(record) => Ok(Project::present(record, false)),
         Err(error) => {
-            if let Some((path, content)) = created_file {
+            for (path, content) in created_files {
                 if fs::metadata(&path).is_ok_and(|metadata| metadata.len() == content.len() as u64)
                 {
                     if fs::read_to_string(&path).as_deref().ok() == Some(content.as_str()) {
@@ -168,9 +191,10 @@ pub fn import(store: &Store, path: &Path) -> Result<Project, String> {
         outside_managed_engines(state, &actual_file)?;
         if let Some(existing) = state
             .projects
-            .iter()
+            .iter_mut()
             .find(|project| same_path(&project.project_file, &project_file))
         {
+            existing.hidden = false;
             return Ok(existing.clone());
         }
         let record = new_record(directory, project_file, None, &info);
@@ -188,15 +212,27 @@ pub fn set_engine(store: &Store, id: &str, engine_id: Option<String>) -> Result<
         None
     };
     let record = store.update(|state| {
-        if let (Some(engine_id), Some(info)) = (&engine_id, &info) {
-            validate_engine(available_engine(state, engine_id)?, info)?;
-        }
+        let engine = match (&engine_id, &info) {
+            (Some(engine_id), Some(info)) => {
+                let engine = available_engine(state, engine_id)?;
+                validate_engine(engine, info)?;
+                Some(engine.clone())
+            }
+            _ => None,
+        };
         let record = state
             .projects
             .iter_mut()
             .find(|project| project.id == id)
             .ok_or("That project is no longer registered.")?;
         record.engine_id = engine_id;
+        match &engine {
+            Some(engine) => pin_engine(record, engine),
+            None => {
+                record.engine_tag = None;
+                record.engine_edition = None;
+            }
+        }
         if let Some(info) = info {
             info.apply(record);
         }
@@ -215,7 +251,7 @@ pub fn open(store: &Store, id: &str) -> Result<Project, String> {
             .iter()
             .find(|project| project.id == id)
             .ok_or("That project is no longer registered.")?;
-        let engine = project_engine(state, project, &info)?;
+        let engine = project_engine(state, project, &info)?.clone();
         launch(&engine.executable, &engine.tag, Some(&project.directory)).map_err(|error| {
             format!(
                 "Cannot open {} with Godot {}: {error}",
@@ -230,6 +266,7 @@ pub fn open(store: &Store, id: &str) -> Result<Project, String> {
             .find(|project| project.id == id)
             .expect("the project is unchanged while holding the store lock");
         project.last_opened_at = Some(unix_millis());
+        pin_engine(project, &engine);
         info.apply(project);
         Ok(project.clone())
     });
@@ -240,10 +277,7 @@ pub fn open(store: &Store, id: &str) -> Result<Project, String> {
             error
         }
     })?;
-    Ok(Project {
-        record,
-        missing: false,
-    })
+    Ok(Project::present(record, false))
 }
 
 pub fn reveal(store: &Store, id: &str) -> Result<(), String> {
@@ -328,8 +362,18 @@ fn new_record(
         added_at: unix_millis(),
         last_opened_at: None,
         godot_major: info.godot_major,
+        godot_minor: info.godot_minor,
         requires_dotnet: info.requires_dotnet,
+        favorite: false,
+        hidden: false,
+        engine_tag: None,
+        engine_edition: None,
     }
+}
+
+fn pin_engine(record: &mut ProjectRecord, engine: &EngineRecord) {
+    record.engine_tag = Some(engine.tag.clone());
+    record.engine_edition = Some(engine.edition);
 }
 
 fn available_engine<'a>(state: &'a StateData, id: &str) -> Result<&'a EngineRecord, String> {
@@ -425,6 +469,7 @@ fn parse_project(body: &str, legacy: bool) -> ProjectInfo {
     let mut section = "";
     let mut version = None;
     let mut feature_major = None;
+    let mut feature_minor = None;
     let mut name = None;
     let mut requires_dotnet = false;
     let mut lines = body.trim_start_matches('\u{feff}').lines().peekable();
@@ -453,8 +498,11 @@ fn parse_project(body: &str, legacy: bool) -> ProjectInfo {
                     for feature in read_features(value, &mut lines) {
                         requires_dotnet |= feature.eq_ignore_ascii_case("C#");
                         if let Some((major, minor)) = feature.split_once('.') {
-                            if minor.parse::<u32>().is_ok() {
-                                feature_major = major.parse::<u8>().ok().or(feature_major);
+                            if let (Ok(major), Ok(minor)) =
+                                (major.parse::<u8>(), minor.parse::<u32>())
+                            {
+                                feature_major = Some(major);
+                                feature_minor = Some(minor);
                             }
                         }
                     }
@@ -481,6 +529,7 @@ fn parse_project(body: &str, legacy: bool) -> ProjectInfo {
     };
     ProjectInfo {
         name: name.filter(|name| !name.trim().is_empty()),
+        godot_minor: feature_minor.filter(|_| godot_major == feature_major),
         godot_major,
         requires_dotnet,
     }
@@ -522,39 +571,20 @@ fn read_features(value: &str, lines: &mut Peekable<Lines<'_>>) -> Vec<String> {
 fn new_project_contents(
     name: &str,
     engine: &EngineRecord,
-) -> Result<(&'static str, String), String> {
-    let title = serde_json::to_string(name).expect("a project name can always be encoded as text");
-    match engine_major(engine) {
-        Some(2) => Ok(("engine.cfg", format!("[application]\nname={title}\n"))),
-        Some(3) => {
-            let original_godot_3 = engine_minor(engine)? == 0;
-            let version = if original_godot_3 { 3 } else { 4 };
-            let renderer = if original_godot_3 {
-                ""
-            } else {
-                "\n[rendering]\nquality/driver/driver_name=\"GLES2\"\n"
-            };
-            let features = if engine.edition == Edition::Dotnet {
-                "custom_features=\"C#\"\n"
-            } else {
-                ""
-            };
-            Ok(("project.godot", format!("config_version={version}\n{features}\n[application]\nconfig/name={title}\n{renderer}")))
-        }
-        Some(4) => {
-            let minor = engine_minor(engine)?;
-            let dotnet = if engine.edition == Edition::Dotnet {
-                ", \"C#\""
-            } else {
-                ""
-            };
-            let features = format!(
-                "config/features=PackedStringArray(\"4.{minor}\"{dotnet}, \"GL Compatibility\")"
-            );
-            Ok(("project.godot", format!("config_version=5\n\n[application]\nconfig/name={title}\n{features}\n\n[rendering]\nrenderer/rendering_method=\"gl_compatibility\"\n")))
-        }
-        _ => Err("Choose a Godot 2, 3 or 4 engine to create a project.".into()),
-    }
+    template: Template,
+    renderer: Option<Renderer>,
+) -> Result<template::Contents, String> {
+    let major = engine_major(engine)
+        .ok_or("Choose a Godot 2, 3 or 4 engine to create a project.")?;
+    let minor = if major == 2 { 0 } else { engine_minor(engine)? };
+    template::contents(
+        name,
+        major,
+        minor,
+        engine.edition == Edition::Dotnet,
+        template,
+        renderer,
+    )
 }
 
 fn write_project(path: &Path, content: &str) -> Result<(), String> {
@@ -715,7 +745,7 @@ mod tests {
             ("Godot 3", "three", 3, "config_version=4", true),
             ("Mèo & Bạn", "four", 4, "config_version=5", true),
         ] {
-            let project = create(&store, name, &parent, id.into()).unwrap();
+            let project = create(&store, name, &parent, id.into(), Template::Empty, None).unwrap();
             assert_eq!(project.record.name, name);
             assert_eq!(project.record.godot_major, Some(major));
             assert_eq!(project.record.requires_dotnet, dotnet);
@@ -732,7 +762,7 @@ mod tests {
         fs::create_dir(&existing).unwrap();
         let marker = existing.join("project.godot");
         fs::write(&marker, b"existing config").unwrap();
-        assert!(create(&store, "Existing", &parent, "four".into()).is_err());
+        assert!(create(&store, "Existing", &parent, "four".into(), Template::Empty, None).is_err());
         assert_eq!(fs::read(marker).unwrap(), b"existing config");
     }
 
@@ -796,24 +826,24 @@ mod tests {
             "bad:name",
         ] {
             assert!(
-                create(&store, name, root.path(), "current".into()).is_err(),
+                create(&store, name, root.path(), "current".into(), Template::Empty, None).is_err(),
                 "{name}"
             );
         }
         let nested = managed.join("Future");
-        assert!(create(&store, "Game", &nested, "current".into()).is_err());
+        assert!(create(&store, "Game", &nested, "current".into(), Template::Empty, None).is_err());
         assert!(!nested.exists());
-        assert!(create(&store, "Game", Path::new("relative"), "current".into()).is_err());
+        assert!(create(&store, "Game", Path::new("relative"), "current".into(), Template::Empty, None).is_err());
         let protected_file = managed.join("project.godot");
         fs::write(&protected_file, "config_version=5\n").unwrap();
         assert!(import(&store, &protected_file).is_err());
         let sibling = root.path().join("Godot-managed-folder");
-        assert!(create(&store, "Game", &sibling, "current".into()).is_ok());
+        assert!(create(&store, "Game", &sibling, "current".into(), Template::Empty, None).is_ok());
 
         let installing = root.path().join("Godot-being-registered");
         fs::create_dir(&installing).unwrap();
         fs::write(installing.join(crate::engine::OWNER_MARKER), "install-job").unwrap();
-        assert!(create(&store, "Game", &installing, "current".into()).is_err());
+        assert!(create(&store, "Game", &installing, "current".into(), Template::Empty, None).is_err());
     }
 
     #[test]
@@ -831,7 +861,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        let project = create(&store, "Pinned", root.path(), "pinned".into())
+        let project = create(&store, "Pinned", root.path(), "pinned".into(), Template::Empty, None)
             .unwrap()
             .record;
         store

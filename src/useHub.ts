@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errorMessage, isActive } from "./api";
-import type { Architecture, Catalogue, InstalledEngine, Job, Settings, Stage } from "./api";
+import type { Architecture, Catalogue, Edition, InstalledEngine, Job, Settings, Stage } from "./api";
 import { findEngineUpdates, updateKey } from "./updates";
 
 type Resource<T> = { data: T; loading: boolean; error: string };
 type Notice = { message: string; type: "success" | "error"; action?: "downloads" | "updates" };
+/** An editor being installed for a project, assigned to it once the install completes. */
+export type EditorRequest = { tag: string; edition: Edition; arch: string; jobId: string };
 type CatalogueResult = Omit<Resource<Catalogue | null>, "loading">;
 
 const stageOrder: Record<Stage, number> = {
@@ -40,6 +42,7 @@ export function useHub() {
   const [jobsLoading, setJobsLoading] = useState(true);
   const [jobsError, setJobsError] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [editorRequests, setEditorRequests] = useState<Record<string, EditorRequest>>({});
   const catalogueRequest = useRef<{ force: boolean; promise: Promise<CatalogueResult> } | null>(null);
   const checkingUpdates = useRef(false);
   const announcedUpdates = useRef(new Set<string>());
@@ -174,6 +177,15 @@ export function useHub() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  const requestEditor = useCallback((projectId: string, request: EditorRequest | null) => {
+    setEditorRequests((current) => {
+      const next = { ...current };
+      if (request) next[projectId] = request;
+      else delete next[projectId];
+      return next;
+    });
+  }, []);
+
   function applySettings(data: Settings) {
     setSettings({ data, loading: false, error: "" });
   }
@@ -197,6 +209,8 @@ export function useHub() {
     recordJob,
     notice,
     setNotice,
+    editorRequests,
+    requestEditor,
   };
 }
 

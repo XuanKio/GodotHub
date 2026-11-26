@@ -119,3 +119,41 @@ export function findEngineUpdates(engines: readonly InstalledEngine[], releases:
     .sort((left, right) => compareVersions(right.targetVersion, left.targetVersion))
     .map(({ update }) => update);
 }
+
+export interface EditorRequest {
+  major: number | null;
+  minor: number | null;
+  /** Tag of the editor the project was last pinned to, if any. */
+  tag: string | null;
+  edition: Edition;
+}
+
+export interface EditorCandidate {
+  release: Release;
+  build: Build;
+  /** The exact editor the project used before, or the newest stable of its minor version. */
+  recommended: boolean;
+}
+
+/**
+ * Releases that can open a project: its previously pinned tag first, then stable releases of the
+ * project's major version, preferring its minor version, newest first.
+ */
+export function findEditorCandidates(releases: readonly Release[], request: EditorRequest, arch: string): EditorCandidate[] {
+  const candidates: { release: Release; build: Build; version: Version; exact: boolean; sameMinor: boolean }[] = [];
+  for (const release of releases) {
+    const version = parseVersion(release.tag);
+    const build = release.builds.find((item) => item.edition === request.edition && item.arch === arch);
+    if (!version || !build) continue;
+    const exact = release.tag === request.tag;
+    const [major, minor] = version.parts;
+    if (!exact && (release.channel !== "stable" || version.stage !== stageOrder.stable)) continue;
+    if (!exact && request.major !== null && major !== request.major) continue;
+    if (!exact && request.major === null && major < 2) continue;
+    candidates.push({ release, build, version, exact, sameMinor: request.minor !== null && minor === request.minor });
+  }
+  candidates.sort((left, right) => Number(right.exact) - Number(left.exact)
+    || Number(right.sameMinor) - Number(left.sameMinor)
+    || compareVersions(right.version, left.version));
+  return candidates.map(({ release, build }, index) => ({ release, build, recommended: index === 0 }));
+}
