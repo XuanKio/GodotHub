@@ -194,6 +194,57 @@ async fn remove_engine(app: AppHandle, id: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+async fn run_project_task<T: Send + 'static>(
+    app: AppHandle,
+    operation: impl FnOnce(&Store) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || operation(app.state::<Hub>().store()?))
+        .await
+        .map_err(|error| format!("Project operation failed: {error}"))?
+}
+
+#[tauri::command]
+async fn list_projects(app: AppHandle) -> Result<Vec<project::Project>, String> {
+    run_project_task(app, |store| Ok(project::list(store))).await
+}
+
+#[tauri::command]
+async fn create_project(
+    app: AppHandle,
+    name: String,
+    parent_directory: PathBuf,
+    engine_id: String,
+) -> Result<project::Project, String> {
+    run_project_task(app, move |store| {
+        project::create(store, &name, &parent_directory, engine_id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn import_project(app: AppHandle, project_file: PathBuf) -> Result<project::Project, String> {
+    run_project_task(app, move |store| project::import(store, &project_file)).await
+}
+
+#[tauri::command]
+async fn set_project_engine(
+    app: AppHandle,
+    id: String,
+    engine_id: Option<String>,
+) -> Result<project::Project, String> {
+    run_project_task(app, move |store| project::set_engine(store, &id, engine_id)).await
+}
+
+#[tauri::command]
+async fn launch_project(app: AppHandle, id: String) -> Result<project::Project, String> {
+    run_project_task(app, move |store| project::open(store, &id)).await
+}
+
+#[tauri::command]
+async fn reveal_project(app: AppHandle, id: String) -> Result<(), String> {
+    run_project_task(app, move |store| project::reveal(store, &id)).await
+}
+
 enum Install {
     Engine {
         directory: PathBuf,
@@ -452,6 +503,12 @@ fn main() {
             remove_engine,
             install_engine,
             install_templates,
+            list_projects,
+            create_project,
+            import_project,
+            set_project_engine,
+            launch_project,
+            reveal_project,
         ])
         .run(tauri::generate_context!())
         .expect("Could not run Godot Hub");

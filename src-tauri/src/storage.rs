@@ -35,10 +35,26 @@ pub struct EngineRecord {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecord {
+    pub id: String,
+    pub name: String,
+    pub directory: PathBuf,
+    pub project_file: PathBuf,
+    pub engine_id: Option<String>,
+    pub added_at: u64,
+    pub last_opened_at: Option<u64>,
+    pub godot_major: Option<u8>,
+    pub requires_dotnet: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 pub struct StateData {
     pub settings: Settings,
     pub engines: Vec<EngineRecord>,
     pub default_engine_id: Option<String>,
+    #[serde(default)]
+    pub projects: Vec<ProjectRecord>,
 }
 
 pub struct Store {
@@ -58,6 +74,7 @@ impl Store {
                 settings: defaults,
                 engines: Vec::new(),
                 default_engine_id: None,
+                projects: Vec::new(),
             },
             Err(e) => return Err(format!("Cannot open {}: {e}", file.display())),
         };

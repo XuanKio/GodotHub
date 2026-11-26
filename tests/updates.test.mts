@@ -19,6 +19,7 @@ function installed(tag: string, fields: Partial<InstalledEngine> = {}): Installe
     arch: "x64",
     executable: "C:/Godot/editor.exe",
     managed: true,
+    available: true,
     isDefault: false,
     templatesInstalled: false,
     installedAt: 1,

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, Box, CheckCircle, CircleAlert, Download, FolderKanban, Monitor, Settings2, X } from "lucide-react";
 import { architectureLabels, isActive } from "./api";
-import { StatePanel } from "./components";
 import { useHub } from "./useHub";
 import { Downloads } from "./views/Downloads";
 import { Installs } from "./views/Installs";
 import type { InstallsTab } from "./views/Installs";
+import { Projects } from "./views/Projects";
 import { Settings } from "./views/Settings";
 
 const navigation = [
@@ -18,7 +18,7 @@ const navigation = [
 type View = typeof navigation[number]["id"];
 
 export function App() {
-  const [view, setView] = useState<View>("installs");
+  const [view, setView] = useState<View>("projects");
   const [installsTab, setInstallsTab] = useState<InstallsTab>("installed");
   const main = useRef<HTMLElement>(null);
   const hub = useHub();
@@ -38,7 +38,7 @@ export function App() {
       <aside className="sidebar">
         <div className="brand">
           <img src="/hub-icon.png" alt="" width={40} height={40} />
-          <div><strong>Godot Hub</strong><span>Engine manager</span></div>
+          <div><strong>Godot Hub</strong><span>Projects &amp; engines</span></div>
         </div>
         <nav aria-label="Main navigation" className="navigation">
           {navigation.map(({ name, id, icon: Icon }) => (
@@ -60,18 +60,7 @@ export function App() {
         </div>
         {view === "downloads" && <Downloads hub={hub} onBrowse={browseReleases} />}
         {view === "settings" && <Settings hub={hub} />}
-        {view === "projects" && (
-          <>
-            <header className="page-heading"><div><h1>Projects</h1></div></header>
-            <div className="view-section">
-              <StatePanel icon={FolderKanban} title="Project management is planned" description="Use Installs to set up a Godot editor and open projects from the editor.">
-                <button type="button" className="button secondary" onClick={() => { setInstallsTab("installed"); setView("installs"); }}>
-                  <Box size={17} /> Go to Installs
-                </button>
-              </StatePanel>
-            </div>
-          </>
-        )}
+        {view === "projects" && <Projects hub={hub} onBrowse={browseReleases} />}
       </main>
       {hub.notice && (
         <div className={`toast toast-${hub.notice.type}`} role={hub.notice.type === "error" ? "alert" : "status"}>

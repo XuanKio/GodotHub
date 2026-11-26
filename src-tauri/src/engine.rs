@@ -14,7 +14,7 @@ use std::{
 };
 use uuid::Uuid;
 
-const OWNER_MARKER: &str = ".godot-hub-install";
+pub(crate) const OWNER_MARKER: &str = ".godot-hub-install";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +22,7 @@ pub struct InstalledEngine {
     #[serde(flatten)]
     record: EngineSummary,
     managed: bool,
+    available: bool,
     is_default: bool,
     templates_installed: bool,
 }
@@ -61,6 +62,7 @@ fn view(record: &EngineRecord, default: Option<&str>, godot_data: &Path) -> Inst
             installed_at: record.installed_at,
         },
         managed: record.managed_directory.is_some(),
+        available: record.executable.is_file(),
         is_default: default == Some(record.id.as_str()),
         templates_installed: templates_installed(record, godot_data),
     }

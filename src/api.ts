@@ -23,6 +23,20 @@ export interface InstalledEngine {
   isDefault: boolean;
   templatesInstalled: boolean;
   installedAt: number;
+  available: boolean;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  directory: string;
+  projectFile: string;
+  engineId: string | null;
+  addedAt: number;
+  lastOpenedAt: number | null;
+  godotMajor: number | null;
+  requiresDotnet: boolean;
+  missing: boolean;
 }
 
 export interface Asset {
@@ -88,10 +102,24 @@ export const api = {
   reveal: (id: string) => invoke<void>("reveal_engine", { id }),
   openRelease: (tag: string) => invoke<void>("open_release_page", { tag }),
   openChangelog: (tag: string, curated: boolean) => invoke<void>("open_changelog", { tag, curated }),
+  projects: () => invoke<Project[]>("list_projects"),
+  createProject: (name: string, parentDirectory: string, engineId: string) =>
+    invoke<Project>("create_project", { name, parentDirectory, engineId }),
+  importProject: (projectFile: string) => invoke<Project>("import_project", { projectFile }),
+  setProjectEngine: (id: string, engineId: string | null) =>
+    invoke<Project>("set_project_engine", { id, engineId }),
+  launchProject: (id: string) => invoke<Project>("launch_project", { id }),
+  revealProject: (id: string) => invoke<void>("reveal_project", { id }),
   pickEngine: () => open({
     title: "Select the Godot editor executable",
     multiple: false,
     filters: [{ name: "Windows executable", extensions: ["exe"] }],
+  }),
+  pickProject: (defaultPath?: string) => open({
+    title: "Select project.godot or engine.cfg",
+    defaultPath,
+    multiple: false,
+    filters: [{ name: "Godot project files", extensions: ["godot", "cfg"] }],
   }),
   pickDirectory: (title: string, defaultPath: string) => open({
     title,
